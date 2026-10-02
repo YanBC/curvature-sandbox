@@ -97,7 +97,7 @@ const Utils = (() => {
 
   return {
     clamp, lerp, smoothstep, rand, randLog, hexToRgb, rgbToHex, mixHex, hslHex, randomColor,
-    redshiftColor, redshiftCss, redshiftGradientCss, fmt, circularSpeed,
+    RS_STOPS, redshiftColor, redshiftCss, redshiftGradientCss, fmt, circularSpeed,
   };
 })();
 
@@ -1030,9 +1030,124 @@ const Curvature = (() => {
   let scene = null, lattice = null, sheet = null, drops = null, builtFor = '';
   // Per-body scratch arrays (structure-of-arrays for the inner loops).
   let cap = 0, bx, by, bz, bS, bSK, bGM, bA2, bA2s;
-  const col = [0, 0, 0];
+  // Bodies for the grid shaders, one texel column per body:
+  // row 0 = (x, y, z, s_lattice), row 1 = (G·m, a², s_sheet, a²_sheet).
+  let bodyTex = null, texCap = 0;
+
+  // Shared by both grid shaders. `position` is a vertex's offset from the snapped grid centre.
+  const SHADER_COMMON = /* glsl */ `
+    uniform sampler2D uBodies;
+    uniform int uCount;
+    uniform vec3 uCenter;
+    uniform float uC2;
+    uniform bool uRedshift;
+    uniform vec4 uStops[RS_N]; // (rate, r, g, b), same ramp as Utils.redshiftColor
+    varying vec3 vColor;
+    #include <fog_pars_vertex>
+
+    vec3 redshiftColor(float rate) {
+      rate = clamp(rate, 0.0, 1.0);
+      for (int i = 1; i < RS_N; i++) {
+        if (rate <= uStops[i].x) {
+          vec4 a = uStops[i - 1], b = uStops[i];
+          return mix(a.yzw, b.yzw, (rate - a.x) / (b.x - a.x));
+        }
+      }
+      return uStops[RS_N - 1].yzw;
+    }
+
+    // Clock-rate ramp (time-dilation mode) or plain cyan by deformation.
+    vec3 shade(float phi, float amount, float fade) {
+      if (uRedshift) {
+        float g = 1.0 + 2.0 * phi / uC2;
+        float rate = g > 0.0 ? sqrt(g) : 0.0;
+        return redshiftColor(rate) * fade * min(1.1, 0.16 + 2.0 * pow(max(1.0 - rate, 0.0), 0.6));
+      }
+      return vec3(0.25, 0.7, 1.0) * fade * min(1.0, 0.16 + amount * 0.12);
+    }
+
+    void emit(vec3 world) {
+      vec4 mvPosition = modelViewMatrix * vec4(world, 1.0);
+      gl_Position = projectionMatrix * mvPosition;
+      #include <fog_vertex>
+    }`;
+
+  // Each body pulls a vertex toward itself by  r · s / (s + r²)  (s ∝ r_s): ≈ s/r far away,
+  // never more than r up close, so vertices bunch into wells without passing through the mass.
+  const LATTICE_VERT = SHADER_COMMON + /* glsl */ `
+    uniform float uHalf, uMaxD;
+    void main() {
+      vec3 p = uCenter + position;
+      vec3 d = vec3(0.0);
+      float phi = 0.0;
+      for (int j = 0; j < uCount; j++) {
+        vec4 b0 = texelFetch(uBodies, ivec2(j, 0), 0);
+        vec4 b1 = texelFetch(uBodies, ivec2(j, 1), 0);
+        vec3 e = b0.xyz - p;
+        float r2 = dot(e, e);
+        d += e * (b0.w / (b0.w + r2 + 1e-9));
+        phi -= b1.x * inversesqrt(r2 + b1.y);
+      }
+      float dm = length(d);
+      if (dm > uMaxD) { d *= uMaxD / dm; dm = uMaxD; }
+      vec3 o = abs(position);
+      vColor = shade(phi, dm, 1.0 - 0.85 * smoothstep(0.45, 1.0, max(o.x, max(o.y, o.z)) / uHalf));
+      emit(p + d);
+    }`;
+
+  // Sheet in the xz-plane, sunk by  Σ k·r_s / √(d² + (R+2)²)  with a soft cap (see sheetDepthAt).
+  const SHEET_VERT = SHADER_COMMON + /* glsl */ `
+    uniform float uSheetY, uSheetHalf, uSheetMax;
+    void main() {
+      vec2 p = uCenter.xz + position.xz;
+      float depth = 0.0, phi = 0.0;
+      for (int j = 0; j < uCount; j++) {
+        vec4 b0 = texelFetch(uBodies, ivec2(j, 0), 0);
+        vec4 b1 = texelFetch(uBodies, ivec2(j, 1), 0);
+        vec2 e = b0.xz - p;
+        float inv = inversesqrt(dot(e, e) + b1.w);
+        depth += b1.z * inv;
+        phi -= b1.x * inv;
+      }
+      depth = uSheetMax * (1.0 - exp(-depth / uSheetMax));
+      vColor = shade(phi, depth * 0.6, 1.0 - smoothstep(0.5, 1.0, length(position.xz) / uSheetHalf));
+      emit(vec3(p.x, uSheetY - depth, p.y));
+    }`;
+
+  const GRID_FRAG = /* glsl */ `
+    varying vec3 vColor;
+    #include <fog_pars_fragment>
+    void main() {
+      gl_FragColor = vec4(vColor, 1.0);
+      #include <tonemapping_fragment>
+      #include <encodings_fragment>
+      #include <fog_fragment>
+    }`;
 
   function init(s) { scene = s; }
+
+  // Static grid of centre-relative positions; the vertex shader warps and colours it.
+  function gridSet(base, indices, vertexShader, extraUniforms) {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(base, 3));
+    g.setIndex(indices);
+    const uniforms = THREE.UniformsUtils.merge([THREE.UniformsLib.fog, {
+      uBodies: { value: null },
+      uCount: { value: 0 },
+      uCenter: { value: new THREE.Vector3() },
+      uC2: { value: 1 },
+      uRedshift: { value: true },
+      uStops: { value: Utils.RS_STOPS.map((s) => new THREE.Vector4(s[0], s[1], s[2], s[3])) },
+    }, extraUniforms]);
+    const line = new THREE.LineSegments(g, new THREE.ShaderMaterial({
+      uniforms, vertexShader, fragmentShader: GRID_FRAG,
+      defines: { RS_N: Utils.RS_STOPS.length }, fog: true,
+      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    }));
+    line.frustumCulled = false; // geometry is centre-relative; uCenter moves it
+    scene.add(line);
+    return { line, geo: g };
+  }
 
   function lineSet(vertexCount, indices) {
     const g = new THREE.BufferGeometry();
@@ -1071,19 +1186,26 @@ const Curvature = (() => {
       if (j < n - 1) idx.push(v, id(i, j + 1, k));
       if (k < n - 1) idx.push(v, id(i, j, k + 1));
     }
-    lattice = Object.assign(lineSet(count, idx), { base, half, count });
+    lattice = gridSet(base, idx, LATTICE_VERT, {
+      uHalf: { value: half },
+      uMaxD: { value: SPACING * 2.2 },
+    });
 
     // Sheet: N × N grid in the xz-plane.
     const N = d.sheetN, step = (2 * SHEET_HALF) / (N - 1), sc = N * N;
-    const sbase = new Float32Array(sc * 2), sidx = [];
+    const sbase = new Float32Array(sc * 3), sidx = [];
     for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) {
       const v = i * N + j;
-      sbase[v * 2] = -SHEET_HALF + i * step;
-      sbase[v * 2 + 1] = -SHEET_HALF + j * step;
+      sbase[v * 3] = -SHEET_HALF + i * step;
+      sbase[v * 3 + 2] = -SHEET_HALF + j * step;
       if (i < N - 1) sidx.push(v, v + N);
       if (j < N - 1) sidx.push(v, v + 1);
     }
-    sheet = Object.assign(lineSet(sc, sidx), { base: sbase, count: sc, step });
+    sheet = Object.assign(gridSet(sbase, sidx, SHEET_VERT, {
+      uSheetY: { value: SHEET_Y },
+      uSheetHalf: { value: SHEET_HALF },
+      uSheetMax: { value: SHEET_MAX },
+    }), { step });
 
     drops = lineSet(DROP_CAP * 2, null);
     builtFor = density;
@@ -1110,50 +1232,37 @@ const Curvature = (() => {
     return n;
   }
 
-  // Shared vertex shading: clock-rate ramp (time-dilation mode) or plain cyan by deformation.
-  function shade(C, i3, phi, amount, c2, fade, redshift) {
-    if (redshift) {
-      const g = 1 + (2 * phi) / c2;
-      const rate = g > 0 ? Math.sqrt(g) : 0;
-      Utils.redshiftColor(rate, col);
-      const k = fade * Math.min(1.1, 0.16 + 2.0 * Math.pow(1 - rate, 0.6));
-      C[i3] = col[0] * k; C[i3 + 1] = col[1] * k; C[i3 + 2] = col[2] * k;
-    } else {
-      const k = fade * Math.min(1, 0.16 + amount * 0.12);
-      C[i3] = 0.25 * k; C[i3 + 1] = 0.7 * k; C[i3 + 2] = 1.0 * k;
+  function uploadBodies(n) {
+    if (!bodyTex || n > texCap) {
+      if (bodyTex) bodyTex.dispose();
+      texCap = Math.max(n, 32);
+      bodyTex = new THREE.DataTexture(new Float32Array(texCap * 2 * 4), texCap, 2, THREE.RGBAFormat, THREE.FloatType);
     }
+    const T = bodyTex.image.data, row = texCap * 4;
+    for (let j = 0; j < n; j++) {
+      const o = j * 4;
+      T[o] = bx[j]; T[o + 1] = by[j]; T[o + 2] = bz[j]; T[o + 3] = bS[j];
+      T[row + o] = bGM[j]; T[row + o + 1] = bA2[j]; T[row + o + 2] = bSK[j]; T[row + o + 3] = bA2s[j];
+    }
+    bodyTex.needsUpdate = true;
   }
 
-  // Each body pulls a vertex toward itself by  r · s / (s + r²)  (s ∝ r_s): ≈ s/r far away,
-  // never more than r up close, so vertices bunch into wells without passing through the mass.
+  // The warping runs in the vertex shaders; here we only set their per-frame uniforms.
+  function setUniforms(set, n, cx, cy, cz, p, redshift) {
+    const u = set.line.material.uniforms;
+    u.uBodies.value = bodyTex;
+    u.uCount.value = n;
+    u.uCenter.value.set(cx, cy, cz);
+    u.uC2.value = p.c * p.c;
+    u.uRedshift.value = !!redshift;
+  }
+
   function updateLattice(n, target, p, redshift) {
-    const { base, pos, col: C, count, half } = lattice;
-    const cx = Math.round(target.x / SPACING) * SPACING;
-    const cy = Math.round(target.y / SPACING) * SPACING;
-    const cz = Math.round(target.z / SPACING) * SPACING;
-    const c2 = p.c * p.c, maxD = SPACING * 2.2;
-    for (let v = 0; v < count; v++) {
-      const i3 = v * 3;
-      const lx = base[i3], ly = base[i3 + 1], lz = base[i3 + 2];
-      const px = cx + lx, py = cy + ly, pz = cz + lz;
-      let dx = 0, dy = 0, dz = 0, phi = 0;
-      for (let j = 0; j < n; j++) {
-        const ex = bx[j] - px, ey = by[j] - py, ez = bz[j] - pz;
-        const r2 = ex * ex + ey * ey + ez * ez;
-        const f = bS[j] / (bS[j] + r2 + 1e-9);
-        dx += ex * f; dy += ey * f; dz += ez * f;
-        phi -= bGM[j] / Math.sqrt(r2 + bA2[j]);
-      }
-      let dm = Math.sqrt(dx * dx + dy * dy + dz * dz);
-      if (dm > maxD) { const k = maxD / dm; dx *= k; dy *= k; dz *= k; dm = maxD; }
-      pos[i3] = px + dx; pos[i3 + 1] = py + dy; pos[i3 + 2] = pz + dz;
-      const edge = Math.max(Math.abs(lx), Math.abs(ly), Math.abs(lz)) / half;
-      shade(C, i3, phi, dm, c2, 1 - 0.85 * Utils.smoothstep(0.45, 1, edge), redshift);
-    }
-    lattice.geo.attributes.position.needsUpdate = true;
-    lattice.geo.attributes.color.needsUpdate = true;
+    const snap = (v) => Math.round(v / SPACING) * SPACING;
+    setUniforms(lattice, n, snap(target.x), snap(target.y), snap(target.z), p, redshift);
   }
 
+  // CPU copy of the sheet shader's depth, for the drop lines.
   function sheetDepthAt(n, x, z) {
     let depth = 0;
     for (let j = 0; j < n; j++) {
@@ -1164,27 +1273,8 @@ const Curvature = (() => {
   }
 
   function updateSheet(n, target, p, redshift) {
-    const { base, pos, col: C, count, step } = sheet;
-    const cx = Math.round(target.x / step) * step, cz = Math.round(target.z / step) * step;
-    const c2 = p.c * p.c;
-    for (let v = 0; v < count; v++) {
-      const lx = base[v * 2], lz = base[v * 2 + 1];
-      const px = cx + lx, pz = cz + lz;
-      let depth = 0, phi = 0;
-      for (let j = 0; j < n; j++) {
-        const ex = bx[j] - px, ez = bz[j] - pz;
-        const inv = 1 / Math.sqrt(ex * ex + ez * ez + bA2s[j]);
-        depth += bSK[j] * inv;
-        phi -= bGM[j] * inv;
-      }
-      depth = SHEET_MAX * (1 - Math.exp(-depth / SHEET_MAX));
-      const i3 = v * 3;
-      pos[i3] = px; pos[i3 + 1] = SHEET_Y - depth; pos[i3 + 2] = pz;
-      const rr = Math.sqrt(lx * lx + lz * lz) / SHEET_HALF;
-      shade(C, i3, phi, depth * 0.6, c2, 1 - Utils.smoothstep(0.5, 1, rr), redshift);
-    }
-    sheet.geo.attributes.position.needsUpdate = true;
-    sheet.geo.attributes.color.needsUpdate = true;
+    const { step } = sheet;
+    setUniforms(sheet, n, Math.round(target.x / step) * step, 0, Math.round(target.z / step) * step, p, redshift);
 
     // Drop lines: from each body straight down to its well — shows height above the sheet.
     const m = Math.min(n, DROP_CAP);
@@ -1210,6 +1300,7 @@ const Curvature = (() => {
     drops.line.visible = showS;
     if (!showL && !showS) return;
     const n = prepare(bodies, p, s);
+    uploadBodies(n);
     if (showL) updateLattice(n, target, p, s.redshift);
     if (showS) updateSheet(n, target, p, s.redshift);
   }

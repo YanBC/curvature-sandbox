@@ -161,10 +161,13 @@ curvature responds to mass, G and c:
    height above the plane readable.
 3. **Both** at once.
 
-Grid vertices are recomputed on the CPU each frame (vertices × bodies). Measured CPU cost with 20
-bodies: about **0.25 ms/frame** at the default settings, about **1.3 ms/frame** at the worst case
-(high density, both modes). Physics plus body rendering takes under 0.05 ms. Most of the frame
-budget is left for the GPU.
+Both grids are warped and coloured on the GPU, in vertex shaders that share one prelude (uniforms,
+redshift ramp, shading, fog). Their vertex buffers hold static centre-relative offsets, and each
+frame the bodies are uploaded once as a small float texture (one texel column per body, 8 floats),
+so there's no cap on body count and the CPU cost no longer scales with grid density. Only the drop
+lines (bodies × bodies, at most 128) are still computed on the CPU. Physics plus body rendering
+takes under 0.05 ms. The shaders need WebGL2 (`texelFetch`, loops bounded by a uniform), which
+three.js r147 uses by default.
 
 ---
 
