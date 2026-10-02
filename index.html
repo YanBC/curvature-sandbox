@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Curvature Sandbox</title>
+  <meta name="description" content="Interactive 3D n-body gravity sandbox with relativity-inspired visuals.">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="viewport" aria-label="3D simulation viewport"></div>
+
+  <!-- ───────────── Top bar ───────────── -->
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true"></span>
+      <div>
+        <h1>Curvature Sandbox</h1>
+        <p>Newtonian n-body · relativity-inspired visuals</p>
+      </div>
+    </div>
+
+    <div class="transport">
+      <button id="btn-pause" class="btn primary" title="Pause / resume (Space)">❚❚ Pause</button>
+      <button id="btn-step" class="btn" title="Advance one frame (N)">Step</button>
+      <button id="btn-reset" class="btn" title="Reset to the start state (R)">Reset</button>
+      <button id="btn-mark" class="btn ghost" title="Use the current state as the reset point">Set start</button>
+    </div>
+
+    <label class="preset">
+      <span>Scenario</span>
+      <select id="preset" aria-label="Scenario"></select>
+    </label>
+
+    <div class="topbar-right">
+      <button id="btn-left" class="btn ghost" title="Show / hide controls panel">Controls</button>
+      <button id="btn-right" class="btn ghost" title="Show / hide bodies panel">Bodies</button>
+      <button id="btn-help" class="btn ghost icon-btn" title="Help (H)">?</button>
+    </div>
+  </header>
+
+  <!-- ───────────── Left panel: simulation + overlays + add body ───────────── -->
+  <aside id="panel-left" class="panel left">
+    <details open class="section">
+      <summary>Simulation</summary>
+
+      <div class="field">
+        <div class="field-head"><label for="s-g">Gravity strength <i>G</i></label><output for="s-g"></output></div>
+        <input type="range" id="s-g" min="0" max="5" step="0.05">
+      </div>
+      <div class="field">
+        <div class="field-head"><label for="s-speed">Simulation speed</label><output for="s-speed"></output></div>
+        <input type="range" id="s-speed" min="0" max="5" step="0.05">
+      </div>
+      <div class="field">
+        <div class="field-head"><label for="s-soft">Softening <i>ε</i></label><output for="s-soft"></output></div>
+        <input type="range" id="s-soft" min="0.05" max="5" step="0.05">
+        <p class="note">Smooths close encounters: force ∝ r / (r² + ε²)<sup>3/2</sup>.</p>
+      </div>
+      <div class="field">
+        <div class="field-head"><label for="s-c">Speed of light <i>c</i></label><output for="s-c"></output></div>
+        <input type="range" id="s-c" min="10" max="150" step="1">
+        <p class="note">Lower <i>c</i> → stronger time dilation, deeper curvature, and a lower speed cap (0.99 <i>c</i>).</p>
+      </div>
+      <label class="switch"><span>Collisions &amp; mergers</span><input type="checkbox" id="t-merge"></label>
+      <button id="btn-com" class="btn ghost small wide" title="Remove net drift and recentre on the centre of mass">Go to centre-of-mass frame</button>
+    </details>
+
+    <details open class="section">
+      <summary>Overlays</summary>
+      <label class="switch"><span>Curvature <kbd>C</kbd></span><input type="checkbox" id="t-curv"></label>
+      <label class="switch"><span>Trails <kbd>T</kbd></span><input type="checkbox" id="t-trails"></label>
+      <label class="switch"><span>Velocity / accel vectors <kbd>V</kbd></span><input type="checkbox" id="t-vectors"></label>
+      <label class="switch"><span>Time-dilation colours <kbd>D</kbd></span><input type="checkbox" id="t-redshift"></label>
+
+      <div class="field">
+        <div class="field-head"><label for="sel-curv">Curvature style</label></div>
+        <select id="sel-curv">
+          <option value="lattice">3D lattice (warped grid)</option>
+          <option value="sheet">Embedding sheet (rubber sheet)</option>
+          <option value="both">Both</option>
+        </select>
+      </div>
+      <div class="field">
+        <div class="field-head"><label for="sel-density">Grid density</label></div>
+        <select id="sel-density">
+          <option value="low">Low</option>
+          <option value="med">Medium</option>
+          <option value="high">High</option>
+        </select>
+      </div>
+      <div class="field">
+        <div class="field-head"><label for="s-curv">Curvature exaggeration</label><output for="s-curv"></output></div>
+        <input type="range" id="s-curv" min="0" max="4" step="0.1">
+      </div>
+      <div class="field">
+        <div class="field-head"><label for="s-trail">Trail length</label><output for="s-trail"></output></div>
+        <input type="range" id="s-trail" min="0" max="2000" step="10">
+      </div>
+    </details>
+
+    <details open class="section">
+      <summary>Add body</summary>
+      <div class="grid2">
+        <label class="mini">Name<input id="a-name" type="text" placeholder="auto" maxlength="24" autocomplete="off"></label>
+        <label class="mini">Mass<input id="a-mass" type="number" value="5" min="0" step="any"></label>
+      </div>
+      <div class="vec">
+        <span class="vec-label">Position</span>
+        <label><i>x</i><input id="a-x" type="number" step="any" value="30"></label>
+        <label><i>y</i><input id="a-y" type="number" step="any" value="0"></label>
+        <label><i>z</i><input id="a-z" type="number" step="any" value="0"></label>
+      </div>
+      <div class="vec" id="a-vel">
+        <span class="vec-label">Velocity</span>
+        <label><i>x</i><input id="a-vx" type="number" step="any" value="0"></label>
+        <label><i>y</i><input id="a-vy" type="number" step="any" value="0"></label>
+        <label><i>z</i><input id="a-vz" type="number" step="any" value="0"></label>
+      </div>
+      <label class="switch"><span>Circular orbit around heaviest body</span><input type="checkbox" id="a-orbit" checked></label>
+      <label class="switch"><span>Pinned (immovable)</span><input type="checkbox" id="a-pinned"></label>
+      <div class="row">
+        <input type="color" id="a-color" title="Body colour" aria-label="Body colour">
+        <button id="btn-rand" class="btn ghost" title="Random mass, colour and position">Randomize</button>
+        <button id="btn-add" class="btn primary grow">Add body</button>
+      </div>
+      <p class="hint"><kbd>Shift</kbd> + click in space drops a body there (on the horizontal plane through the orbit centre) using these settings.</p>
+    </details>
+  </aside>
+
+  <!-- ───────────── Right panel: body list + inspector ───────────── -->
+  <aside id="panel-right" class="panel right">
+    <details open class="section">
+      <summary>Bodies <span id="body-count" class="pill">0</span></summary>
+      <div class="list-head"><span></span><span>Name</span><span>Mass</span><span title="Clock rate relative to a distant observer">dτ/dt</span><span></span></div>
+      <ul id="body-list" class="body-list"></ul>
+      <p id="empty-hint" class="hint">No bodies yet. Add one, Shift+click in space, or pick a scenario.</p>
+      <button id="btn-clear" class="btn ghost small danger">Remove all</button>
+    </details>
+
+    <details open class="section">
+      <summary>Inspector <span id="insp-dirty" class="pill warn" hidden>edited</span></summary>
+      <p id="insp-empty" class="hint">Click a body (here or in the scene) to inspect and edit it. Double-click to follow it with the camera.</p>
+      <div id="inspector" hidden>
+        <div class="insp-head">
+          <input type="color" id="insp-color" aria-label="Colour">
+          <input type="text" id="insp-name" maxlength="24" aria-label="Name" autocomplete="off">
+          <span id="insp-badge" class="badge" hidden title="Its Schwarzschild radius exceeds its physical radius">black hole</span>
+        </div>
+        <div class="grid2">
+          <label class="mini">Mass<input id="insp-mass" type="number" min="0" step="any"></label>
+          <label class="switch compact"><span>Pinned</span><input type="checkbox" id="insp-pinned"></label>
+        </div>
+        <div class="vec">
+          <span class="vec-label">Position</span>
+          <label><i>x</i><input id="insp-x" type="number" step="any"></label>
+          <label><i>y</i><input id="insp-y" type="number" step="any"></label>
+          <label><i>z</i><input id="insp-z" type="number" step="any"></label>
+        </div>
+        <div class="vec">
+          <span class="vec-label">Velocity</span>
+          <label><i>x</i><input id="insp-vx" type="number" step="any"></label>
+          <label><i>y</i><input id="insp-vy" type="number" step="any"></label>
+          <label><i>z</i><input id="insp-vz" type="number" step="any"></label>
+        </div>
+        <div class="row">
+          <button id="btn-apply" class="btn primary grow" title="Write these values into the simulation (Enter)">Apply</button>
+          <button id="btn-revert" class="btn ghost" title="Discard edits and show live values">Revert</button>
+          <button id="btn-follow" class="btn ghost" title="Camera follows this body (F)">Follow</button>
+          <button id="btn-del" class="btn ghost danger" title="Delete (Del)">Delete</button>
+        </div>
+        <dl class="readouts">
+          <dt>Speed |v|</dt><dd id="r-speed"></dd>
+          <dt>Acceleration |a|</dt><dd id="r-acc"></dd>
+          <dt>Radius · r<sub>s</sub></dt><dd id="r-radius"></dd>
+          <dt>Potential Φ</dt><dd id="r-phi"></dd>
+          <dt>Gravity factor √(1+2Φ/c²)</dt><dd id="r-gf"></dd>
+          <dt>Lorentz factor γ</dt><dd id="r-gamma"></dd>
+          <dt>Clock rate dτ/dt</dt><dd id="r-rate"></dd>
+          <dt>Redshift z</dt><dd id="r-z"></dd>
+          <dt>Proper time τ</dt><dd id="r-tau"></dd>
+        </dl>
+      </div>
+    </details>
+  </aside>
+
+  <!-- ───────────── HUD ───────────── -->
+  <div id="hud" class="hud">
+    <div class="hud-stats">
+      <div><span>FPS</span><b id="h-fps">–</b></div>
+      <div><span>Bodies</span><b id="h-bodies">0</b></div>
+      <div><span>Sim t</span><b id="h-time">0</b></div>
+      <div><span>Substeps</span><b id="h-steps">0</b></div>
+      <div title="Relative change in total energy since the last structural change (add/remove/merge/edit)"><span>ΔE/E</span><b id="h-energy">–</b></div>
+      <div title="Magnitude of total momentum"><span>|Σp|</span><b id="h-mom">–</b></div>
+    </div>
+    <div class="legend" title="Clock rate dτ/dt used by the time-dilation colour mapping">
+      <span class="legend-label">clock rate</span>
+      <div class="legend-scale">
+        <div id="legend-bar" class="legend-bar"></div>
+        <div class="legend-ticks"><span>0 (frozen)</span><span>0.5</span><span>1 (flat space)</span></div>
+      </div>
+    </div>
+    <div id="h-status" class="status" aria-live="polite"></div>
+  </div>
+
+  <div class="mouse-hint">Drag: orbit · Right-drag: pan · Wheel: zoom · Shift+click: add · Double-click: follow</div>
+
+  <!-- ───────────── Help ───────────── -->
+  <div id="help" class="modal" hidden>
+    <div class="modal-card" role="dialog" aria-labelledby="help-title">
+      <button id="help-close" class="btn ghost icon-btn close" aria-label="Close">✕</button>
+      <h2 id="help-title">How to use the sandbox</h2>
+      <div class="help-cols">
+        <div>
+          <h3>Camera</h3>
+          <ul>
+            <li><b>Left-drag</b> orbit · <b>right-drag</b> pan · <b>wheel</b> zoom</li>
+            <li><b>Click</b> a body to select · <b>double-click</b> to follow</li>
+            <li><b>Shift + click</b> empty space to add a body there</li>
+          </ul>
+          <h3>Keys</h3>
+          <ul class="keys">
+            <li><kbd>Space</kbd> pause / resume</li>
+            <li><kbd>N</kbd> step one frame</li>
+            <li><kbd>R</kbd> reset</li>
+            <li><kbd>C</kbd> curvature · <kbd>T</kbd> trails · <kbd>V</kbd> vectors</li>
+            <li><kbd>D</kbd> time-dilation colours</li>
+            <li><kbd>F</kbd> follow selected · <kbd>Del</kbd> delete selected</li>
+            <li><kbd>Esc</kbd> deselect / stop following</li>
+          </ul>
+        </div>
+        <div>
+          <h3>What you are seeing</h3>
+          <p>Bodies move under <b>Newtonian</b> mutual gravity (softened, leapfrog-integrated). Nothing here solves Einstein's equations — the relativity is visual.</p>
+          <p><b>Curvature:</b> the lattice is pulled toward each mass in proportion to its Schwarzschild radius r<sub>s</sub> = 2Gm/c²; the sheet is an embedding-diagram style well.</p>
+          <p><b>Time-dilation colours</b> (the chosen relativistic effect): each body's clock rate is <code>dτ/dt = √(1+2Φ/c²) · √(1−v²/c²)</code>. Slow clocks are shifted toward red and dimmed; a body whose r<sub>s</sub> exceeds its radius renders as a black hole. The grid uses the same mapping.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="fatal" class="fatal" hidden></div>
+
+  <!-- three.js r147 is the last release that ships classic (non-module) builds,
+       which lets this page run straight from file:// with no server or build step. -->
+  <script src="https://cdn.jsdelivr.net/npm/three@0.147.0/build/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/controls/OrbitControls.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>
