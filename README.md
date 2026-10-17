@@ -32,7 +32,7 @@ needs internet access.
 - **Collisions.** Radius-based overlap detection and momentum-conserving mergers, with a flash
   effect.
 - **Curvature visualisation.** A warped 3D lattice, an embedding "rubber sheet", or both.
-- **Controls.** Pause/resume, single step, reset, "set start", 8 scenarios (default: the Solar System). Toggles for
+- **Controls.** Pause/resume, single step, reset, "set start", 9 scenarios (default: the Solar System). Toggles for
   curvature, trails, vectors and redshift colours. Sliders for G, simulation speed, softening,
   speed of light, curvature exaggeration and trail length.
 - **HUD.** FPS, simulation time, substeps per frame, energy drift and total momentum.
@@ -197,6 +197,29 @@ not those of a particular date, because every planet starts at its own perihelio
 
 To open a different scenario by default, change
 `loadPreset('solar-system')` in `App.start`.
+
+## Three-body scenarios
+
+- **Figure-eight.** The Chenciner–Montgomery choreography: three equal masses chase each other
+  along one figure-eight curve. It is periodic and stable, so it runs indefinitely.
+- **Triple star + Earth-like planet.** A close binary (period about 4 s) with a third star
+  orbiting the pair about five times farther out (period about 40 s), on a slightly eccentric
+  orbit tilted 20°.
+  This is how real triples such as Alpha Centauri stay together.
+  - **Why it lasts.** Three comparable masses in a compact group almost always throw one body out.
+    Keeping the outer orbit well beyond the Mardling–Aarseth stability limit (about 3.6× the
+    inner separation for these masses) stops that. Keeping the tilt below about 39° avoids
+    Kozai–Lidov cycles, which would stretch the inner orbit until the pair merges.
+  - **An Earth-like planet.** Terra has the Earth/Sun mass ratio relative to Cobalt and orbits
+    it every 4 s or so, like Proxima b around the distant third star of Alpha Centauri. Cobalt is
+    the only place a planet can last: a circumbinary orbit around the close pair would cross
+    Cobalt's path, and an orbit around either star of the pair would have to lie inside the
+    star. The orbit radius (5.5) is between Cobalt's surface (2.6) and the Holman–Wiegert
+    stability limit (about 6.7). It also avoids about 4.5, where the orbit gets stretched (likely
+    a resonance with the pair).
+  - **Tested.** A four-hour run keeps all four bodies with no mergers and no measurable energy
+    drift. Terra stays 4.9–6.2 from Cobalt. The three stars survive with the outer orbit shrunk to
+    3.5× the inner separation, so the setup is not on a knife edge.
 
 ## How to add a body
 

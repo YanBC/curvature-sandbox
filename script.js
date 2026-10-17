@@ -560,6 +560,35 @@ const Presets = (() => {
       },
     },
 
+    triple: {
+      label: 'Triple star + Earth-like planet (stable)',
+      params: { G: 1, softening: 0.3, c: 45 },
+      camera: { pos: [55, 45, 80], target: [0, 0, 0] },
+      build(p) {
+        // A close binary orbited by a distant third star, the arrangement of long-lived triples such as
+        // Alpha Centauri. Mardling–Aarseth puts the stability limit at a_out/a_in ≈ 3.6 for these masses
+        // and orbits; this uses 5. The outer orbit is tilted 20°, below the ~39° where Kozai–Lidov cycles
+        // would pump the inner eccentricity up until the pair merges.
+        const mA = 600, mB = 480, a = 8, M = mA + mB;
+        const v = Utils.circularSpeed(p.G, M, a, p.softening);
+        const out = [
+          { name: 'Aurum', mass: mA, color: '#ffd27a', x: (a * mB) / M, y: 0, z: 0, vx: 0, vy: 0, vz: (v * mB) / M },
+          { name: 'Rubra', mass: mB, color: '#ff8a6b', x: (-a * mA) / M, y: 0, z: 0, vx: 0, vy: 0, vz: (-v * mA) / M },
+        ];
+        // Outer star starts at pericentre r = a(1 − e) with vis-viva speed, around the pair as a point mass.
+        const e = 0.1, aOut = 5 * a;
+        const cobalt = orbit({ mass: M, x: 0, y: 0, z: 0 }, aOut * (1 - e),
+          { name: 'Cobalt', mass: 400, color: '#7ab8ff', incl: 20, phase: 90, speed: Math.sqrt(1 + e) }, p);
+        out.push(cobalt);
+        // An Earth-like planet (Earth/Sun mass ratio) around Cobalt, like Proxima b around Proxima Centauri.
+        // Holman–Wiegert puts the outer edge of stable orbits around Cobalt at ≈ 0.17 aOut ≈ 6.7, and
+        // Cobalt's surface is at 2.6, so the planet sits between them, in Cobalt's orbital plane.
+        // Avoid r ≈ 4.5: something there (likely a resonance with the pair) stretches the orbit to e ≈ 0.25.
+        out.push(orbit(cobalt, 5.5, { name: 'Terra', mass: 1.2e-3, color: '#5fe0a0', incl: 20 }, p));
+        return out;
+      },
+    },
+
     cluster: {
       label: 'Random cluster (mergers)',
       params: { G: 1, softening: 0.8, c: 45 },
